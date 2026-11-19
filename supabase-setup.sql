@@ -9,6 +9,9 @@ create table if not exists public.responses (
 
 alter table public.responses enable row level security;
 
+grant insert on public.responses to anon, authenticated;
+grant select, delete on public.responses to authenticated;
+
 -- 任何人（學員，不用登入）只能「新增」，不能讀、改、刪
 create policy "anyone can submit" on public.responses
   for insert to anon, authenticated with check (true);
