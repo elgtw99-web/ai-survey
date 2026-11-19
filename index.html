@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 運用現況調查</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --ink:#1f2430; --mute:#6b7280; --line:#e3e6ee; --brand:#4f46e5; --brand-soft:#eef0ff; --err:#d93a3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 -apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; }
+  header { background:var(--brand); color:#fff; padding:28px 20px 56px; }
+  .wrap { max-width:720px; margin:0 auto; }
+  header h1 { margin:0 0 8px; font-size:24px; }
+  header p { margin:0; opacity:.92; font-size:15px; }
+  main { max-width:720px; margin:-32px auto 120px; padding:0 16px; }
+  .sec { margin:28px 4px 8px; font-weight:700; color:var(--brand); letter-spacing:.5px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; margin-bottom:14px; }
+  .card.bad { border-color:var(--err); }
+  .q { font-weight:600; margin-bottom:12px; }
+  .q .req { color:var(--err); margin-left:4px; }
+  .hint { color:var(--mute); font-size:13px; font-weight:400; }
+  .opt { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; cursor:pointer; }
+  .opt:hover { background:var(--brand-soft); }
+  .opt.on { background:var(--brand-soft); border-color:var(--brand); }
+  .opt.off { opacity:.45; cursor:not-allowed; }
+  .opt input { margin-top:5px; accent-color:var(--brand); }
+  .grp { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--mute); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 8px; }
+  @media (max-width:560px) { .grid { grid-template-columns:1fr; } }
+  .scale { display:flex; gap:8px; }
+  .scale label { flex:1; text-align:center; border:1px solid var(--line); border-radius:10px; padding:10px 0; cursor:pointer; }
+  .scale label.on { background:var(--brand); color:#fff; border-color:var(--brand); }
+  .scale input { display:none; }
+  .scale-l { display:flex; justify-content:space-between; font-size:12px; color:var(--mute); margin-top:6px; }
+  input[type=text], textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }
+  textarea { min-height:90px; resize:vertical; }
+  .bar { position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:12px 16px; }
+  .bar .wrap { display:flex; align-items:center; gap:14px; }
+  .prog { flex:1; height:8px; background:var(--line); border-radius:99px; overflow:hidden; }
+  .prog i { display:block; height:100%; width:0; background:var(--brand); transition:width .3s; }
+  .cnt { font-size:13px; color:var(--mute); min-width:64px; text-align:right; }
+  button { background:var(--brand); color:#fff; border:0; border-radius:10px; padding:12px 26px; font:inherit; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .done { text-align:center; padding:48px 20px; }
+  .done h2 { margin:0 0 8px; }
+  .msg { color:var(--err); font-size:14px; margin-top:8px; }
+  .demo { background:#fff7e0; color:#8a5a00; text-align:center; font-size:13px; padding:6px; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" style="display:none">展示模式：尚未連接資料庫，資料只存在這台瀏覽器。</div>
+<header><div class="wrap"><h1 id="title"></h1><p id="intro"></p></div></header>
+<main id="main"></main>
+<div class="bar" id="bar"><div class="wrap">
+  <div class="prog"><i id="prog"></i></div><div class="cnt" id="cnt"></div>
+  <button id="submit">送出</button>
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  const S = window.SURVEY;
+  const DONE_KEY = "ai_survey_done", DRAFT_KEY = "ai_survey_draft";
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+  const safeGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const safeSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
+  document.title = S.title;
+  $("title").textContent = S.title;
+  $("intro").textContent = S.intro;
+  if (!Store.live) $("demo").style.display = "block";
+
+  if (safeGet(DONE_KEY)) return showDone();
+
+  let state = {};
+  try { state = JSON.parse(safeGet(DRAFT_KEY) || "{}"); } catch (e) {}
+  const questions = S.sections.flatMap((s) => s.questions);
+  const cards = {};
+
+  function save() { safeSet(DRAFT_KEY, JSON.stringify(state)); updateProgress(); }
+
+  function answered(q) {
+    const v = state[q.id];
+    if (q.type === "multi") return Array.isArray(v) && v.length > 0;
+    if (q.type === "text") return !!(v && v.trim());
+    return v !== undefined && v !== "";
+  }
+  function updateProgress() {
+    const req = questions.filter((q) => q.required);
+    const n = req.filter(answered).length;
+    $("prog").style.width = (n / req.length * 100) + "%";
+    $("cnt").textContent = n + " / " + req.length + " 題";
+  }
+
+  function optionRow(q, text) {
+    const multi = q.type === "multi";
+    const row = el("label", "opt");
+    const inp = el("input"); inp.type = multi ? "checkbox" : "radio"; inp.name = q.id; inp.value = text;
+    row.append(inp, el("span", "", text));
+    const sync = () => {
+      const v = state[q.id];
+      const on = multi ? (v || []).includes(text) : v === text;
+      inp.checked = on; row.classList.toggle("on", on);
+    };
+    row._sync = sync;
+    inp.addEventListener("change", () => {
+      if (multi) {
+        let v = state[q.id] || [];
+        if (inp.checked) {
+          if (q.max && v.length >= q.max) { inp.checked = false; return; }
+          v = [...v, text];
+        } else v = v.filter((x) => x !== text);
+        state[q.id] = v;
+        refreshMulti(q);
+      } else state[q.id] = text;
+      cards[q.id].classList.remove("bad");
+      refreshAll(q); save();
+    });
+    return row;
+  }
+  function refreshAll(q) { cards[q.id].querySelectorAll(".opt").forEach((r) => r._sync && r._sync()); }
+  function refreshMulti(q) {
+    if (!q.max) return;
+    const v = state[q.id] || [];
+    cards[q.id].querySelectorAll(".opt").forEach((r) => {
+      const c = r.querySelector("input");
+      r.classList.toggle("off", v.length >= q.max && !c.checked);
+    });
+  }
+
+  function build() {
+    const main = $("main");
+    S.sections.forEach((sec) => {
+      main.append(el("div", "sec", sec.title));
+      sec.questions.forEach((q) => {
+        const card = el("div", "card"); cards[q.id] = card;
+        const t = el("div", "q", q.title);
+        if (q.required) t.append(el("span", "req", "*"));
+        card.append(t);
+
+        if (q.type === "single" || q.type === "multi") {
+          if (q.groups) q.groups.forEach((g) => {
+            card.append(el("div", "grp", g.name));
+            const grid = el("div", "grid"); g.options.forEach((o) => grid.append(optionRow(q, o))); card.append(grid);
+          });
+          else q.options.forEach((o) => card.append(optionRow(q, o)));
+          refreshAll(q); refreshMulti(q);
+        } else if (q.type === "scale") {
+          const wrap = el("div", "scale");
+          for (let i = q.min; i <= q.max; i++) {
+            const l = el("label"); const inp = el("input"); inp.type = "radio"; inp.name = q.id;
+            l.append(inp, document.createTextNode(i));
+            if (state[q.id] === i) l.classList.add("on");
+            inp.addEventListener("change", () => {
+              state[q.id] = i; wrap.querySelectorAll("label").forEach((x) => x.classList.remove("on")); l.classList.add("on");
+              card.classList.remove("bad"); save();
+            });
+            wrap.append(l);
+          }
+          card.append(wrap);
+          const lb = el("div", "scale-l"); lb.append(el("span", "", q.minLabel), el("span", "", q.maxLabel)); card.append(lb);
+        } else if (q.type === "text") {
+          const ta = el("textarea"); ta.maxLength = 500; ta.value = state[q.id] || "";
+          ta.addEventListener("input", () => { state[q.id] = ta.value; save(); });
+          card.append(ta);
+        }
+        main.append(card);
+      });
+    });
+    // 暱稱
+    const nc = el("div", "card");
+    nc.append(el("div", "q", "暱稱（選填，不填就是匿名）"));
+    const ni = el("input"); ni.type = "text"; ni.maxLength = 30; ni.placeholder = "例如：小美";
+    ni.value = state._nick || "";
+    ni.addEventListener("input", () => { state._nick = ni.value; save(); });
+    nc.append(ni); main.append(nc);
+    updateProgress();
+  }
+
+  function showDone() {
+    $("bar").style.display = "none";
+    const m = $("main"); m.innerHTML = "";
+    const c = el("div", "card done");
+    c.append(el("h2", "", "已送出，謝謝你！"), el("p", "hint", "整體結果會在上課時一起看。你可以關閉這個頁面了。"));
+    m.append(c);
+  }
+
+  build();
+
+  $("submit").addEventListener("click", async () => {
+    const missing = questions.filter((q) => q.required && !answered(q));
+    document.querySelectorAll(".card.bad").forEach((c) => c.classList.remove("bad"));
+    if (missing.length) {
+      missing.forEach((q) => cards[q.id].classList.add("bad"));
+      cards[missing[0].id].scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    const btn = $("submit"); btn.disabled = true; btn.textContent = "送出中…";
+    const answers = {};
+    questions.forEach((q) => { if (state[q.id] !== undefined) answers[q.id] = q.type === "text" ? (state[q.id] || "").trim() : state[q.id]; });
+    try {
+      await Store.submit((state._nick || "").trim(), answers);
+      safeSet(DONE_KEY, "1"); try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+      showDone();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "送出";
+      let m = document.querySelector(".msg"); if (!m) { m = el("div", "msg"); document.querySelector(".bar .wrap").after(m); }
+      m.textContent = "送出失敗，請檢查網路後再按一次（你的答案還在）。";
+    }
+  });
+})();
+</script>
+</body>
+</html>

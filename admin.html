@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>調查結果（講師專用）</title>
+<style>
+  :root { --bg:#0f1220; --card:#181c30; --ink:#eef0fa; --mute:#9aa1bd; --line:#2a2f4a; --brand:#7c83ff; --brand2:#5eead4; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 -apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; }
+  .top { position:sticky; top:0; z-index:5; background:rgba(15,18,32,.92); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); padding:14px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .top h1 { margin:0; font-size:20px; flex:1; }
+  .big { font-size:34px; font-weight:800; color:var(--brand2); line-height:1; }
+  .big small { font-size:14px; color:var(--mute); font-weight:400; margin-left:4px; }
+  .live { font-size:12px; color:var(--mute); }
+  .live::before { content:""; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand2); margin-right:6px; }
+  button { background:#232844; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font:inherit; font-size:14px; cursor:pointer; }
+  button:hover { border-color:var(--brand); }
+  main { max-width:1200px; margin:0 auto; padding:24px; display:grid; grid-template-columns:repeat(auto-fill,minmax(520px,1fr)); gap:18px; }
+  @media (max-width:600px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .card.wide { grid-column:1/-1; }
+  .card h3 { margin:0 0 14px; font-size:16px; }
+  .row { display:grid; grid-template-columns:minmax(120px,38%) 1fr 78px; gap:10px; align-items:center; margin:6px 0; font-size:14px; }
+  .lab { overflow-wrap:anywhere; }
+  .track { height:20px; background:#232844; border-radius:6px; overflow:hidden; }
+  .fill { height:100%; background:linear-gradient(90deg,var(--brand),var(--brand2)); border-radius:6px; transition:width .6s ease; }
+  .val { text-align:right; font-variant-numeric:tabular-nums; color:var(--mute); }
+  .val b { color:var(--ink); }
+  .grp { margin:12px 0 4px; font-size:12px; color:var(--mute); }
+  .avg { font-size:30px; font-weight:800; color:var(--brand2); margin-bottom:6px; }
+  .txt { border-top:1px solid var(--line); padding:8px 0; font-size:15px; }
+  .txt small { color:var(--mute); }
+  .login { max-width:360px; margin:15vh auto; background:var(--card); padding:28px; border-radius:14px; border:1px solid var(--line); }
+  .login input { width:100%; margin:6px 0 12px; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0f1220; color:var(--ink); font:inherit; }
+  .login button { width:100%; background:var(--brand); border:0; color:#fff; font-weight:700; padding:11px; }
+  .err { color:#ff8a8a; font-size:14px; min-height:20px; }
+  .demo { background:#3a2f00; color:#ffd666; text-align:center; font-size:13px; padding:6px; }
+  .empty { color:var(--mute); text-align:center; padding:60px 0; grid-column:1/-1; }
+</style>
+</head>
+<body>
+<div id="demo" class="demo" style="display:none">展示模式：尚未連接資料庫，只顯示這台瀏覽器裡的資料。
+  <button id="seed">加入 25 筆範例資料</button> <button id="clearDemo">清空</button></div>
+
+<div id="login" class="login" style="display:none">
+  <h2 style="margin-top:0">講師登入</h2>
+  <label>Email<input id="em" type="email" autocomplete="username"></label>
+  <label>密碼<input id="pw" type="password" autocomplete="current-password"></label>
+  <div class="err" id="lerr"></div>
+  <button id="go">登入</button>
+</div>
+
+<div id="app" style="display:none">
+  <div class="top">
+    <h1>AI 運用現況調查・即時結果</h1>
+    <div class="big"><span id="n">0</span><small>份已填寫</small></div>
+    <div class="live" id="live">即時更新中</div>
+    <button id="nick">顯示暱稱：開</button>
+    <button id="csv">匯出 CSV</button>
+  </div>
+  <main id="main"></main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="common.js"></script>
+<script>
+(function () {
+  const S = window.SURVEY;
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const questions = S.sections.flatMap((s) => s.questions);
+  let rows = [], showNick = true;
+
+  function bars(card, items, total) {
+    const max = Math.max(1, ...items.map((i) => i.count));
+    items.forEach((it) => {
+      const r = el("div", "row");
+      const pct = total ? Math.round(it.count / total * 100) : 0;
+      const track = el("div", "track"), fill = el("div", "fill");
+      fill.style.width = (it.count / max * 100) + "%"; track.append(fill);
+      const v = el("div", "val"); const b = el("b", "", pct + "%"); v.append(b, document.createTextNode("  " + it.count + " 人"));
+      r.append(el("div", "lab", it.label), track, v); card.append(r);
+    });
+  }
+
+  function render() {
+    const total = rows.length;
+    $("n").textContent = total;
+    const main = $("main"); main.innerHTML = "";
+    if (!total) { main.append(el("div", "empty", "還沒有人填寫，等第一份送出就會出現。")); return; }
+
+    questions.forEach((q) => {
+      const vals = rows.map((r) => r.answers && r.answers[q.id]);
+      const card = el("div", "card"); card.append(el("h3", "", q.title.replace(/（.*?）/g, "").trim()));
+      if (q.type === "single" || q.type === "multi") {
+        const opts = q.groups ? q.groups.flatMap((g) => g.options) : q.options;
+        const answeredN = vals.filter((v) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && !v.length)).length;
+        let items = opts.map((o) => ({ label: o, count: vals.filter((v) => Array.isArray(v) ? v.includes(o) : v === o).length }));
+        if (q.sort) {
+          items.sort((a, b) => b.count - a.count);
+          card.classList.add("wide");
+        }
+        if (q.type === "multi") card.append(Object.assign(el("div", "grp", "可複選，百分比＝選該項的人數 ÷ " + answeredN + " 位填答者")));
+        bars(card, items, answeredN);
+      } else if (q.type === "scale") {
+        const nums = vals.filter((v) => typeof v === "number");
+        const avg = nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1) : "-";
+        card.append(el("div", "avg", avg + " / " + q.max));
+        const items = []; for (let i = q.min; i <= q.max; i++) items.push({ label: i + (i === q.min ? "（" + q.minLabel + "）" : i === q.max ? "（" + q.maxLabel + "）" : ""), count: nums.filter((v) => v === i).length });
+        bars(card, items, nums.length);
+      } else if (q.type === "text") {
+        card.classList.add("wide");
+        const list = rows.filter((r) => r.answers && r.answers[q.id]);
+        if (!list.length) card.append(el("div", "grp", "沒有人填寫"));
+        list.forEach((r) => { const d = el("div", "txt", r.answers[q.id]); if (showNick && r.nickname) d.append(el("small", "", "　— " + r.nickname)); card.append(d); });
+      }
+      main.append(card);
+    });
+  }
+
+  async function refresh() {
+    try { rows = await Store.fetchAll(); $("live").textContent = "即時更新中・" + new Date().toLocaleTimeString("zh-TW"); render(); }
+    catch (e) { $("live").textContent = "讀取失敗，稍後自動重試"; }
+  }
+
+  function csv() {
+    const head = ["時間", "暱稱"]; const cols = [];
+    questions.forEach((q) => { head.push(q.title); cols.push(q); });
+    const esc = (v) => '"' + String(v === undefined || v === null ? "" : Array.isArray(v) ? v.join("；") : v).replace(/"/g, '""') + '"';
+    const lines = [head.map(esc).join(",")];
+    rows.forEach((r) => lines.push([new Date(r.created_at).toLocaleString("zh-TW"), r.nickname || ""].concat(cols.map((q) => r.answers && r.answers[q.id])).map(esc).join(",")));
+    const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "ai-survey.csv"; a.click();
+  }
+
+  function startApp() {
+    $("login").style.display = "none"; $("app").style.display = "block";
+    refresh(); Store.subscribe(refresh);
+    $("nick").onclick = () => { showNick = !showNick; $("nick").textContent = "顯示暱稱：" + (showNick ? "開" : "關"); render(); };
+    $("csv").onclick = csv;
+  }
+
+  if (!Store.live) {
+    $("demo").style.display = "block";
+    $("seed").onclick = () => { Store.seedDemo(25); refresh(); };
+    $("clearDemo").onclick = async () => { await Store.deleteAll(); refresh(); };
+    startApp();
+  } else {
+    Store.sb.auth.getSession().then(({ data }) => {
+      if (data.session) startApp(); else $("login").style.display = "block";
+    });
+    $("go").onclick = async () => {
+      $("lerr").textContent = "";
+      const { error } = await Store.sb.auth.signInWithPassword({ email: $("em").value.trim(), password: $("pw").value });
+      if (error) $("lerr").textContent = "登入失敗，請確認帳號密碼。"; else startApp();
+    };
+  }
+})();
+</script>
+</body>
+</html>
