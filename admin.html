@@ -47,9 +47,12 @@
 <div id="login" class="login" style="display:none">
   <h2 style="margin-top:0">講師登入</h2>
   <label>Email<input id="em" type="email" autocomplete="username"></label>
-  <label>密碼<input id="pw" type="password" autocomplete="current-password"></label>
   <div class="err" id="lerr"></div>
-  <button id="go">登入</button>
+  <button id="go">寄登入連結到我的信箱</button>
+  <details style="margin-top:14px;color:var(--mute);font-size:14px"><summary style="cursor:pointer">改用密碼登入</summary>
+    <label>密碼<input id="pw" type="password" autocomplete="current-password"></label>
+    <button id="gopw">用密碼登入</button>
+  </details>
 </div>
 
 <div id="app" style="display:none">
@@ -150,13 +153,25 @@
     $("clearDemo").onclick = async () => { await Store.deleteAll(); refresh(); };
     startApp();
   } else {
+    let started = false;
+    const start = () => { if (!started) { started = true; startApp(); } };
+    Store.sb.auth.onAuthStateChange((ev, session) => { if (session) start(); });
     Store.sb.auth.getSession().then(({ data }) => {
-      if (data.session) startApp(); else $("login").style.display = "block";
+      if (data.session) start(); else if (!started) $("login").style.display = "block";
     });
     $("go").onclick = async () => {
-      $("lerr").textContent = "";
+      const email = $("em").value.trim();
+      if (!email) { $("lerr").textContent = "請先填 Email。"; return; }
+      $("lerr").style.color = ""; $("lerr").textContent = "";
+      // 只寄給已建立的講師帳號（資料庫已關閉自行註冊）
+      const { error } = await Store.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
+      if (error) $("lerr").textContent = "寄送失敗：這個 Email 不是講師帳號，或寄信太頻繁，請稍後再試。";
+      else { $("lerr").style.color = "#5eead4"; $("lerr").textContent = "已寄出，請到信箱點登入連結（也看一下垃圾郵件匣）。"; }
+    };
+    $("gopw").onclick = async () => {
+      $("lerr").style.color = ""; $("lerr").textContent = "";
       const { error } = await Store.sb.auth.signInWithPassword({ email: $("em").value.trim(), password: $("pw").value });
-      if (error) $("lerr").textContent = "登入失敗，請確認帳號密碼。"; else startApp();
+      if (error) $("lerr").textContent = "登入失敗，請確認帳號密碼。";
     };
   }
 })();
